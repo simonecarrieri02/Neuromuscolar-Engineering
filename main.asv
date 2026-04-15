@@ -53,24 +53,30 @@ Wp = [low_cut high_cut] / f_nyq; %passband
 Ws = [10 500] / f_nyq; %stopband
 
 [b, a] = butter(5, Wp, 'bandpass'); 
-filteredData = zeros(size(data)); 
+
+%% 2. Esecuzione Filtraggio
+filteredData = zeros(size(data)); % Pre-allocazione matrice
 
 for i = 1:6
+    % Applica il filtro a ogni canale
+    % filtfilt garantisce fase zero (nessun ritardo temporale)
     filteredData(i, :) = filtfilt(b, a, data(i, :)); 
 end
 
-% Data plotting ----------
-figure('Name', 'Visualization of 6 FILTERED CHANNELS EMG', 'Color', 'w');
+%% 3. Rappresentazione Grafica (Tutti i canali in una figura)
+figure('Name', 'Visualizzazione 6 Canali filtrati EMG', 'Color', 'w');
 
 for i = 1:numChannels
-    subplot(numChannels, 1, i); 
+    subplot(numChannels, 1, i); % Crea un sotto-grafico per ogni canale
     plot(t, filteredData(i, :), 'LineWidth', 0.8);
     
+    % Estetica del grafico
     grid on;
     ylabel(['Ch ' num2str(i)]);
-    xlim([t(1) t(end)]); 
-    ylim([min(filteredData(i,:)) max(filteredData(i,:))])
+    xlim([t(1) t(end)]); % Imposta i limiti dell'asse X sul tempo totale
+    ylim([-2 2]);
     
+    % Rimuove le etichette dell'asse X tranne che per l'ultimo canale
     if i < numChannels
         set(gca, 'XTickLabel', []);
     else
@@ -78,52 +84,5 @@ for i = 1:numChannels
     end
 end
 
-sgtitle('Filtered Data MotemaSens');
-
-
-%% Envelope extraction for classification
-
-% Machine learning techniques are applied to the EMG signal to classify
-% hand opening and closing movements.
-%
-% The analysis focuses on the amplitude envelope of the signal, which
-% contains the most relevant information for distinguishing different
-% muscle activation patterns.
-%
-% The envelope is computed by full-wave rectification followed by a
-% low-pass filter at 10 Hz, providing a smooth estimate of the
-% underlying muscle activation dynamics.
-
-cutoff_env = 10;                   
-Wp_env = cutoff_env / f_nyq;         
-
-[b_env, a_env] = butter(5, Wp_env, 'low');
-
-envelopeData = zeros(size(rectifiedData));
-
-for i = 1:numChannels
-    rectifiedData = abs(filteredData); % rectification
-    envelopeData(i, :) = filtfilt(b_env, a_env, rectifiedData(i, :)); % apply filter to get envelope
-end
-
-% Data plotting ----------
-figure('Name', 'Visualization of 6 ENVELOPE CHANNELS EMG', 'Color', 'w');
-
-
-for i = 1:numChannels
-    subplot(numChannels, 1, i); 
-    plot(t, envelopeData(i, :), 'LineWidth', 0.8);
-    
-    grid on;
-    ylabel(['Ch ' num2str(i)]);
-    xlim([t(1) t(end)]);
-    ylim([min(envelopeData(i,:)) max(envelopeData(i,:))])
-    
-    if i < numChannels
-        set(gca, 'XTickLabel', []);
-    else
-        xlabel('Tempo [s]');
-    end
-end
-
-sgtitle('Envelope Data MomtaSens');
+% Titolo generale
+sgtitle(['Dati Filtrati MotemaSens']);
