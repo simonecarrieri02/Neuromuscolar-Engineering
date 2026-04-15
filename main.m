@@ -10,6 +10,8 @@ clc
 %
 % The sampling frequency of the acquisition system is 2000 Hz.
 
+load("Acquisizione_2.mat")
+
 fs = 2000; %sampling frequencey
 [numChannels, numSamples] = size(data);
 t = (0:numSamples-1) / fs; 
@@ -99,7 +101,6 @@ Wp_env = cutoff_env / f_nyq;
 
 [b_env, a_env] = butter(5, Wp_env, 'low');
 
-envelopeData = zeros(size(rectifiedData));
 
 for i = 1:numChannels
     rectifiedData = abs(filteredData); % rectification
