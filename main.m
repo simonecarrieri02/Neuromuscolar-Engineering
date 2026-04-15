@@ -81,7 +81,7 @@ end
 sgtitle('Filtered Data MotemaSens');
 
 
-%% Envelope extraction for classification
+%% ---------- Envelope extraction --------------
 
 % Machine learning techniques are applied to the EMG signal to classify
 % hand opening and closing movements.
