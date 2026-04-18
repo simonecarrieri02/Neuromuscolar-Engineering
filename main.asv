@@ -281,51 +281,54 @@ end
 sgtitle('Envelope Data MotemaSens - Reorganized (Apertures then Closures)');
 
 
-%% -----------------------------------------------------------------------
-%  Feature Extraction & SVM Classification
-%  -----------------------------------------------------------------------
-%  Each contraction segment is described by 6 time-domain features per
-%  channel (MAV, RMS, VAR, WL, ZC, SSC), yielding a feature vector of
-%  length nChannels * nFeature for each observation.
-%  Labels: 1 = Opening,  -1 = Closing
-%  -----------------------------------------------------------------------
+%% ----------------------------------------
+%           Feature Extraction phase
+%------------------------------------------
+% In this phase we are extracting for each channel some significant
+% features to pass to the SVM algorithm.
 
-nContractions = nO + nC;
-nFeature      = 6;
+nContractions = nO + nC;   
+nFeature = 6;             
 
-% --- Dataset assembly ---------------------------------------------------
-X = zeros(nContractions, nChannels * nFeature);  % [nContractions × 36]
-y = [ones(nO, 1); -ones(nC, 1)];                 % class labels
+%First of all w want to build our dataset and matrix of eventxfeatures that
+%we will pass to our model
+X = zeros(nContractions, nChannels * nFeature);  % 18 x 36
+%We identify an output label vector where labels: 1=Opening, -1=Closing
+y = [ones(nO,1); -1*ones(nC,1)];    
 
+
+%In this loop we pass each segment of each channel to the extractFeatures
+%function
 for k = 1:nO
-    X(k,:) = extractFeatures(segA(:,:,k));
+    win = segA(:,:,k);   % winSamp x channel
+    X(k,:) = extractFeatures(win);
 end
 for k = 1:nC
-    X(nO+k,:) = extractFeatures(segC(:,:,k));
+    win = segC(:,:,k);
+    X(nO+k,:) = extractFeatures(win);
 end
 
-% --- Train / test split (70 / 30, stratified) ---
-cv     = cvpartition(y, 'HoldOut', 0.3);
-Xtrain = X(training(cv),:);   ytrain = y(training(cv));
-Xtest  = X(test(cv),:);   ytest  = y(test(cv));
 
-% --- SVM training ---
-SVMModel = fitcsvm(Xtrain, ytrain,'KernelFunction', 'linear', 'Standardize', true);
+cv = cvpartition(y, 'HoldOut', 0.3);
 
-% --- Predictions ---
+Xtrain = X(training(cv), :);
+ytrain = y(training(cv));
+
+Xtest  = X(test(cv), :);
+ytest  = y(test(cv));
+SVMModel = fitcsvm(Xtrain, ytrain, ...
+    'KernelFunction', 'linear', ...
+    'Standardize', true);
+
 ypredTrain = predict(SVMModel, Xtrain);
-ypredTest  = predict(SVMModel, Xtest);
 
-% --- Evaluation ---
-accTrain = mean(ypredTrain == ytrain) * 100;
-accTest  = mean(ypredTest  == ytest)  * 100;
-fprintf('Training accuracy : %.2f %%\n', accTrain);
-fprintf('Test accuracy : %.2f %%\n', accTest);
+ypred = predict(SVMModel, Xtest);
 
+% Confusion matrix TRAINING
 figure;
 confusionchart(ytrain, ypredTrain);
-title(sprintf('Confusion Matrix – Training Set  (acc = %.1f %%)', accTrain));
+title('Confusion Matrix - TRAINING (SVM EMG)');
 
 figure;
-confusionchart(ytest, ypredTest);
-title(sprintf('Confusion Matrix – Test Set  (acc = %.1f %%)', accTest));
+confusionchart(ytest, ypred);
+title('Confusion Matrix - SVM EMG Classification');
