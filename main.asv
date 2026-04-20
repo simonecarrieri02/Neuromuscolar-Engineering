@@ -10,7 +10,7 @@ clc
 %
 % The sampling frequency of the acquisition system is 2000 Hz.
 
-load("Acquisizione_2.mat")
+load("Acquisizione_2.mat");
 
 fs = 2000; %sampling frequencey
 [numChannels, numSamples] = size(data);
@@ -182,12 +182,12 @@ title(['Peaks identified: ' num2str(length(t_pks)) ' - Envelope Low-pass 10Hz'])
 legend('Singal','Envelope', 'Peaks'); hold off;
 
 
-idxOpening = [1, 3, 5:12];    % 1 (try opening); 3(maximum opening); 5:12(sub-maximal opening)
-idxClosing = [2, 4, 13:18];   % 2 (try closing); 4(maximum closing); 13:18(sub-maximal closing)
+idxOpening = [1, 3, 5:12];    % 1 (maximum opening); 3(maximum opening); 5:12(sub-maximal opening)
+idxClosing = [2, 4, 13:20];   % 2 (maximum closing); 4(maximum closing); 13:20(sub-maximal closing)
 
 nO = length(idxOpening);
 nC = length(idxClosing);
-segA = zeros(winSamp, nChannels, nO); %winSamp x channels x nO
+segO = zeros(winSamp, nChannels, nO); %winSamp x channels x nO
 segC = zeros(winSamp, nChannels, nC); %winSamp x channels x nC
 
 % Estrazione con rispetto del pre-trigger (s_start)
@@ -195,7 +195,7 @@ for k = 1:nO
     s_detect = starts(idxOpening(k));
     s_start  = s_detect - preSamp; 
     if s_start < 1, s_start = 1; end
-    segA(:,:,k) = filteredData(:, s_start : s_start + winSamp - 1).';
+    segO(:,:,k) = filteredData(:, s_start : s_start + winSamp - 1).';
 end
 
 for k = 1:nC
@@ -207,7 +207,7 @@ end
 
 %Permutating: winSamp x channels x n -> winSamp x n x channels
 %Reshaping: winSamp x n x channels -> (winSamp*n) x channels
-allOpening = reshape(permute(segA, [1,3,2]), [], nChannels);
+allOpening = reshape(permute(segO, [1,3,2]), [], nChannels);
 allClosing = reshape(permute(segC, [1,3,2]), [], nChannels);
 allOpeClo = [allOpening; allClosing];
 
@@ -281,54 +281,167 @@ end
 sgtitle('Envelope Data MotemaSens - Reorganized (Apertures then Closures)');
 
 
-%% ----------------------------------------
-%           Feature Extraction phase
-%------------------------------------------
-% In this phase we are extracting for each channel some significant
-% features to pass to the SVM algorithm.
+%% -----------------------------------------------------------------------
+%  Feature Extraction & SVM Classification
+%  -----------------------------------------------------------------------
+%  Each contraction segment is described by 6 time-domain features per
+%  channel (MAV, RMS, VAR, WL, ZC, SSC), yielding a feature vector of
+%  length nChannels * nFeature for each observation.
+%  Labels: 1 = Opening,  -1 = Closing
+%  -----------------------------------------------------------------------
 
-nContractions = nO + nC;   
-nFeature = 6;             
+nContractions = nO + nC;
+nFeature = 6;
 
-%First of all w want to build our dataset and matrix of eventxfeatures that
-%we will pass to our model
-X = zeros(nContractions, nChannels * nFeature);  % 18 x 36
-%We identify an output label vector where labels: 1=Opening, -1=Closing
-y = [ones(nO,1); -1*ones(nC,1)];    
+% --- Dataset assembly ---------------------------------------------------
+X = zeros(nContractions, nChannels * nFeature);  % [nContractions × 36]
+y = [ones(nO, 1); -ones(nC, 1)];                 % class labels
 
-
-%In this loop we pass each segment of each channel to the extractFeatures
-%function
 for k = 1:nO
-    win = segA(:,:,k);   % winSamp x channel
-    X(k,:) = extractFeatures(win);
+    X(k,:) = extractFeatures(segO(:,:,k));
 end
 for k = 1:nC
-    win = segC(:,:,k);
-    X(nO+k,:) = extractFeatures(win);
+    X(nO+k,:) = extractFeatures(segC(:,:,k));
 end
 
-
+% --- Train / test split (70 / 30, stratified) ---
 cv = cvpartition(y, 'HoldOut', 0.3);
+Xtrain = X(training(cv),:);   ytrain = y(training(cv));
+Xtest  = X(test(cv),:);   ytest  = y(test(cv));
 
-Xtrain = X(training(cv), :);
-ytrain = y(training(cv));
+% --- SVM training ---
+SVMModel = fitcsvm(Xtrain, ytrain,'KernelFunction', 'linear', 'Standardize', true);
 
-Xtest  = X(test(cv), :);
-ytest  = y(test(cv));
-SVMModel = fitcsvm(Xtrain, ytrain, ...
-    'KernelFunction', 'linear', ...
-    'Standardize', true);
-
+% --- Predictions ---
 ypredTrain = predict(SVMModel, Xtrain);
+ypredTest  = predict(SVMModel, Xtest);
 
-ypred = predict(SVMModel, Xtest);
+% --- Evaluation ---
+accTrain = mean(ypredTrain == ytrain) * 100;
+accTest  = mean(ypredTest  == ytest)  * 100;
+fprintf('Training accuracy : %.2f %%\n', accTrain);
+fprintf('Test accuracy : %.2f %%\n', accTest);
 
-% Confusion matrix TRAINING
 figure;
 confusionchart(ytrain, ypredTrain);
-title('Confusion Matrix - TRAINING (SVM EMG)');
+title(sprintf('Confusion Matrix – Training Set  (acc = %.1f %%)', accTrain));
 
 figure;
-confusionchart(ytest, ypred);
-title('Confusion Matrix - SVM EMG Classification');
+confusionchart(ytest, ypredTest);
+title(sprintf('Confusion Matrix – Test Set  (acc = %.1f %%)', accTest));
+
+
+% --- LDA training ---
+LDAModel = fitcdiscr(Xtrain, ytrain);
+
+% --- Predictions ---
+ypredLDATrain = predict(LDAModel, Xtrain);
+ypredLDATest  = predict(LDAModel, Xtest);
+
+% --- Evaluation ---
+accLDATrain = mean(ypredLDATrain == ytrain) * 100;
+accLDATest  = mean(ypredLDATest  == ytest)  * 100;
+fprintf('Training accuracy LDA: %.2f %%\n', accLDATrain);
+fprintf('Test accuracy LDA: %.2f %%\n', accLDATest);
+
+figure;
+confusionchart(ytrain, ypredLDATrain);
+title(sprintf('Confusion Matrix LDA – Training Set  (acc = %.1f %%)', accLDATrain));
+
+figure;
+confusionchart(ytest, ypredLDATest);
+title(sprintf('Confusion Matrix LDA – Test Set  (acc = %.1f %%)', accLDATest));
+
+
+%% -----------------------------------------------------------------------
+%  Cosine Similarity Classifier
+% -----------------------------------------------------------------------
+%  Each contraction segment is characterised by its Average Rectified
+%  Value (ARV) computed over overlapping windows. A prototype vector is
+%  built from the maximal contraction (segment 1) for each class, and
+%  sub-maximal contractions (segments 3:end) are classified by cosine
+%  similarity to those prototypes.
+%  Labels: 1 = Opening,  -1 = Closing
+% -----------------------------------------------------------------------
+
+% --- Prototype computation ---
+
+% Segment 1 is the maximal contraction for each class
+maxSegO = segO(:,:,1);
+maxSegC = segC(:,:,1);
+
+% Window parameters: 250 ms, 50% overlap
+win_len = round(0.250 * fs);
+step    = round(win_len * 0.50);
+
+% Number of valid windows per maximal contraction
+n_win_O = floor((size(maxSegO,1) - win_len) / step) + 1;
+n_win_C = floor((size(maxSegC,1) - win_len) / step) + 1;
+
+% Compute per-window ARV for the maximal contractions
+ARV_max_O = zeros(n_win_O, nChannels);
+ARV_max_C = zeros(n_win_C, nChannels);
+
+for j = 1:n_win_O
+    idx = (j-1)*step + (1:win_len);
+    ARV_max_O(j,:) = mean(abs(maxSegO(idx,:)), 1);
+end
+
+for j = 1:n_win_C
+    idx = (j-1)*step + (1:win_len);
+    ARV_max_C(j,:) = mean(abs(maxSegC(idx,:)), 1);
+end
+
+% Prototype: average ARV across windows → column vector (nChannels × 1)
+prot_ARV_O = mean(ARV_max_O, 1)';
+prot_ARV_C = mean(ARV_max_C, 1)';
+
+% --- ARV Extraction ---
+
+% Segments 3:end are treated as sub-maximal contractions
+submaxSegO = segO(:,:,3:end);
+submaxSegC = segC(:,:,3:end);
+nSubMax = size(submaxSegO, 3);   
+
+% Per-window ARV for every channel and sub-maximal repetition
+ARV_sub_O = zeros(n_win_O, nChannels, nSubMax);
+ARV_sub_C = zeros(n_win_C, nChannels, nSubMax);
+
+for n = 1:nSubMax
+    for j = 1:n_win_O
+        idx = (j-1)*step + (1:win_len);
+        ARV_sub_O(j,:,n) = mean(abs(submaxSegO(idx,:,n)), 1);
+    end
+    for j = 1:n_win_C
+        idx = (j-1)*step + (1:win_len);
+        ARV_sub_C(j,:,n) = mean(abs(submaxSegC(idx,:,n)), 1);
+    end
+end
+
+% Average across windows → (nChannels × nSubMax), then transpose
+% Result: (nSubMax × nChannels) — one feature vector per repetition
+ARV_sub_O = squeeze(mean(ARV_sub_O, 1))';   % nSubMax × nChannels
+ARV_sub_C = squeeze(mean(ARV_sub_C, 1))';
+
+% Full feature matrix and ground-truth labels
+ARV = [ARV_sub_O; ARV_sub_C];                    % (2·nSubMax) × nChannels
+trueLabels = [ones(nSubMax,1); -1*ones(nSubMax,1)];       % 1 = Open, -1 = Close
+
+% --- Evaluation ---
+
+pred = cosineClassifier(ARV, prot_ARV_O, prot_ARV_C);
+
+% Confusion matrix
+C = confusionmat(trueLabels, pred);
+
+figure;
+confusionchart(C, {'Open','Close'}, ...
+    'Title',         'Confusion Matrix – Cosine Classifier', ...
+    'RowSummary',    'row-normalized', ...
+    'ColumnSummary', 'column-normalized');
+
+% Metrics
+accuracy = sum(diag(C)) / sum(C(:)) * 100;
+
+fprintf('\n--- Classification results ---\n');
+fprintf('Accuracy: %.1f%%\n', accuracy);
